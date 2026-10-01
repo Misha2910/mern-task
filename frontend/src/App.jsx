@@ -1,8 +1,9 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FolderKanban, Plus } from "lucide-react";
 import { authApi } from "./api/auth.api.js";
 import { projectApi } from "./api/project.api.js";
 import { taskApi } from "./api/task.api.js";
+import { setAuthToken, clearAuthToken } from "./api/apiInstance.js";
 import { statuses, getStoredSession } from "./constants.js";
 import AuthScreen from "./AuthScreen.jsx";
 import Button from "./components/Button.jsx";
@@ -14,16 +15,11 @@ import "./App.css";
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [authLoading, setAuthLoading] = useState(() =>
-    Boolean(getStoredSession()?.token),
-  );
+  const [authLoading, setAuthLoading] = useState(() => Boolean(getStoredSession()?.token));
   const [projects, setProjects] = useState([]);
-  const [loadedProjectsFor, setLoadedProjectsFor] = useState(null);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const projectsLoading = Boolean(
-    session && loadedProjectsFor !== session.token,
-  );
   const [tasksLoading, setTasksLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -32,99 +28,108 @@ export default function App() {
   const [dialog, setDialog] = useState(null);
   const [openMenu, setOpenMenu] = useState(false);
 
-  // Close the project menu when clicking outside it
+  // Close the project menu when clicking outside
   useEffect(() => {
-    if (!openMenu) return undefined;
-    function handleClick() { setOpenMenu(false); }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    if (!openMenu) return;
+    const close = () => setOpenMenu(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
   }, [openMenu]);
 
   // Restore session on mount
   useEffect(() => {
     const stored = getStoredSession();
-    if (!stored?.token) return;
+    if (!stored?.token) {
+      setAuthLoading(false); // Bug fix: no token → clear boot screen immediately
+      return;
+    }
+    setAuthToken(stored.token);
     authApi
-      .currentUser(stored.token)
+      .currentUser()
       .then(({ user }) => setSession({ token: stored.token, user }))
-      .catch(() => localStorage.removeItem("folio-session"))
+      .catch(() => { clearAuthToken(); localStorage.removeItem("folio-session"); })
       .finally(() => setAuthLoading(false));
   }, []);
 
   // Load projects when session changes
   useEffect(() => {
-    if (!session) return undefined;
+    if (!session) {
+      setProjectsLoading(false); // Bug fix: reset loading when session is cleared (signOut)
+      return;
+    }
     let active = true;
+    setProjectsLoading(true);
     projectApi
-      .list(session.token)
+      .list()
       .then(({ projects: result }) => {
         if (!active) return;
         setProjects(result);
-        setSelectedProjectId((current) =>
-          result.some((project) => project._id === current)
-            ? current
-            : result[0]?._id || null,
+        setSelectedProjectId((cur) =>
+          result.some((p) => p._id === cur) ? cur : result[0]?._id ?? null,
         );
       })
-      .catch((error) => active && setPageError(error.message))
-      .finally(() => active && setLoadedProjectsFor(session.token));
+      .catch((err) => active && setPageError(err.message))
+      .finally(() => active && setProjectsLoading(false));
     return () => { active = false; };
   }, [session]);
 
   // Load tasks when selected project changes
   useEffect(() => {
-    if (!session || !selectedProjectId) {
-      startTransition(() => setTasks([]));
-      return undefined;
-    }
+    if (!session || !selectedProjectId) { setTasks([]); return; }
     let active = true;
-    startTransition(() => setTasksLoading(true));
+    setTasksLoading(true);
     taskApi
-      .list(session.token, selectedProjectId)
+      .list(selectedProjectId)
       .then(({ tasks: result }) => active && setTasks(result))
-      .catch((error) => active && setPageError(error.message))
+      .catch((err) => active && setPageError(err.message))
       .finally(() => active && setTasksLoading(false));
     return () => { active = false; };
   }, [session, selectedProjectId]);
 
-  const selectedProject = projects.find(
-    (project) => project._id === selectedProjectId,
-  );
+  const selectedProject = projects.find((p) => p._id === selectedProjectId);
+
   const counts = useMemo(
     () =>
       Object.fromEntries([
         ["All tasks", tasks.length],
-        ...statuses.map((status) => [
-          status,
-          tasks.filter((task) => task.status === status).length,
-        ]),
+        ...statuses.map((s) => [s, tasks.filter((t) => t.status === s).length]),
       ]),
     [tasks],
   );
+
   const visibleTasks = tasks.filter(
     (task) =>
       (filter === "All tasks" || task.status === filter) &&
-      `${task.title} ${task.description}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
+      `${task.title} ${task.description}`.toLowerCase().includes(search.toLowerCase()),
   );
 
-  // ── Auth ────────────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  async function withSaving(fn) {
+    setPageError("");
+    setSaving(true);
+    try { await fn(); }
+    finally { setSaving(false); }
+  }
+
+  // ── Auth ─────────────────────────────────────────────────────────────────────
 
   function authenticate(result) {
     localStorage.setItem("folio-session", JSON.stringify(result));
+    setAuthToken(result.token);
     setSession(result);
   }
 
   function signOut() {
     localStorage.removeItem("folio-session");
+    clearAuthToken();
     setSession(null);
     setProjects([]);
     setTasks([]);
     setSelectedProjectId(null);
   }
 
-  // ── Project handlers ────────────────────────────────────────────────────────
+  // ── Project handlers ──────────────────────────────────────────────────────────
 
   function selectProject(id) {
     if (id === selectedProjectId) return;
@@ -135,93 +140,57 @@ export default function App() {
   }
 
   async function saveProject(values) {
-    setPageError("");
-    setSaving(true);
-    try {
+    await withSaving(async () => {
       if (dialog.project) {
-        const { project } = await projectApi.update(
-          session.token,
-          dialog.project._id,
-          values,
-        );
-        setProjects((current) =>
-          current.map((item) => (item._id === project._id ? project : item)),
-        );
+        const { project } = await projectApi.update(dialog.project._id, values);
+        setProjects((cur) => cur.map((p) => (p._id === project._id ? project : p)));
       } else {
-        const { project } = await projectApi.create(session.token, values);
-        setProjects((current) => [project, ...current]);
+        const { project } = await projectApi.create(values);
+        setProjects((cur) => [project, ...cur]);
         setTasks([]);
         setSelectedProjectId(project._id);
       }
       setDialog(null);
-    } finally {
-      setSaving(false);
-    }
+    });
   }
 
   async function deleteProject() {
-    if (
-      !selectedProject ||
-      !window.confirm(`Delete "${selectedProject.name}" and all its tasks?`)
-    )
-      return;
+    if (!selectedProject || !window.confirm(`Delete "${selectedProject.name}" and all its tasks?`)) return;
     setPageError("");
     try {
-      await projectApi.remove(session.token, selectedProject._id);
-      const remaining = projects.filter(
-        (project) => project._id !== selectedProject._id,
-      );
+      await projectApi.remove(selectedProject._id);
+      const remaining = projects.filter((p) => p._id !== selectedProject._id);
       setProjects(remaining);
       setTasks([]);
-      setSelectedProjectId(remaining[0]?._id || null);
-    } catch (error) {
-      setPageError(error.message);
+      setSelectedProjectId(remaining[0]?._id ?? null);
+    } catch (err) {
+      setPageError(err.message);
     }
     setOpenMenu(false);
   }
 
-  // ── Task handlers ───────────────────────────────────────────────────────────
+  // ── Task handlers ─────────────────────────────────────────────────────────────
 
   async function saveTask(values) {
-    setPageError("");
-    setSaving(true);
-    try {
+    await withSaving(async () => {
       if (dialog.task) {
-        const { task } = await taskApi.update(
-          session.token,
-          dialog.task._id,
-          values,
-        );
-        setTasks((current) =>
-          current.map((item) => (item._id === task._id ? task : item)),
-        );
+        const { task } = await taskApi.update(dialog.task._id, values);
+        setTasks((cur) => cur.map((t) => (t._id === task._id ? task : t)));
       } else {
-        const { task } = await taskApi.create(
-          session.token,
-          selectedProjectId,
-          values,
-        );
-        setTasks((current) => [task, ...current]);
+        const { task } = await taskApi.create(selectedProjectId, values);
+        setTasks((cur) => [task, ...cur]);
       }
       setDialog(null);
-    } finally {
-      setSaving(false);
-    }
+    });
   }
 
   async function updateTaskStatus(task, status) {
     setPageError("");
     try {
-      const { task: updated } = await taskApi.update(
-        session.token,
-        task._id,
-        { status },
-      );
-      setTasks((current) =>
-        current.map((item) => (item._id === updated._id ? updated : item)),
-      );
-    } catch (error) {
-      setPageError(error.message);
+      const { task: updated } = await taskApi.update(task._id, { status });
+      setTasks((cur) => cur.map((t) => (t._id === updated._id ? updated : t)));
+    } catch (err) {
+      setPageError(err.message);
     }
   }
 
@@ -229,21 +198,19 @@ export default function App() {
     if (!window.confirm(`Delete "${task.title}"?`)) return;
     setPageError("");
     try {
-      await taskApi.remove(session.token, task._id);
-      setTasks((current) => current.filter((item) => item._id !== task._id));
-    } catch (error) {
-      setPageError(error.message);
+      await taskApi.remove(task._id);
+      setTasks((cur) => cur.filter((t) => t._id !== task._id));
+    } catch (err) {
+      setPageError(err.message);
     }
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   if (authLoading)
     return (
       <main className="boot-screen">
-        <span className="brand-mark">
-          <FolderKanban size={19} />
-        </span>
+        <span className="brand-mark"><FolderKanban size={19} /></span>
         <span>Opening your workspace…</span>
       </main>
     );
@@ -279,11 +246,7 @@ export default function App() {
           {pageError && (
             <div className="page-error" role="alert">
               <span>{pageError}</span>
-              <button
-                type="button"
-                onClick={() => setPageError("")}
-                aria-label="Dismiss error"
-              >
+              <button type="button" onClick={() => setPageError("")} aria-label="Dismiss error">
                 ×
               </button>
             </div>
@@ -300,7 +263,7 @@ export default function App() {
                 tasks={tasks}
                 counts={counts}
                 openMenu={openMenu}
-                onToggleMenu={() => setOpenMenu((open) => !open)}
+                onToggleMenu={() => setOpenMenu((o) => !o)}
                 onEditProject={() => {
                   setDialog({ type: "project", project: selectedProject });
                   setOpenMenu(false);
@@ -323,29 +286,17 @@ export default function App() {
                 onNewTask={() => setDialog({ type: "task" })}
               />
               <footer className="content-footer">
-                <span>
-                  Showing {visibleTasks.length} of {tasks.length} tasks
-                </span>
-                <span>
-                  One step at a time <span className="footer-flower">✳</span>
-                </span>
+                <span>Showing {visibleTasks.length} of {tasks.length} tasks</span>
+                <span>One step at a time <span className="footer-flower">✳</span></span>
               </footer>
             </>
           ) : (
             <section className="welcome-empty">
-              <div className="welcome-icon">
-                <FolderKanban size={26} />
-              </div>
+              <div className="welcome-icon"><FolderKanban size={26} /></div>
               <p className="eyebrow">YOUR WORKSPACE IS READY</p>
               <h1>Start with a project.</h1>
-              <p>
-                Give your work a home. Tasks and progress will live here,
-                organized around what matters.
-              </p>
-              <Button
-                icon={Plus}
-                onClick={() => setDialog({ type: "project" })}
-              >
+              <p>Give your work a home. Tasks and progress will live here, organized around what matters.</p>
+              <Button icon={Plus} onClick={() => setDialog({ type: "project" })}>
                 Create your first project
               </Button>
             </section>

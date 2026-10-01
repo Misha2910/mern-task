@@ -85,7 +85,7 @@ export default function FormDialog({ type, initial, loading, onClose, onSave }) 
             }
           >
             {statuses.map((status) => (
-              <option key={status}>{status}</option>
+              <option key={status} value={status}>{status}</option>
             ))}
           </Field>
         )}

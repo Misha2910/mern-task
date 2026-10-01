@@ -35,18 +35,22 @@ export default function Sidebar({
         />
       </div>
       <nav className="project-nav" aria-label="Projects">
-        {projects.map((project, index) => (
-          <button
-            className={`project-nav-item ${selectedProjectId === project._id ? "active" : ""}`}
-            key={project._id}
-            type="button"
-            onClick={() => onSelectProject(project._id)}
-          >
-            <span className={`project-swatch swatch-${index % 4}`} />
-            <span className="project-nav-name">{project.name}</span>
-            {selectedProjectId === project._id && <ArrowRight size={15} />}
-          </button>
-        ))}
+        {projects.map((project) => {
+          // Hash the _id so the swatch colour is stable regardless of list order
+          const swatchIndex = project._id.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % 4;
+          return (
+            <button
+              className={`project-nav-item ${selectedProjectId === project._id ? "active" : ""}`}
+              key={project._id}
+              type="button"
+              onClick={() => onSelectProject(project._id)}
+            >
+              <span className={`project-swatch swatch-${swatchIndex}`} />
+              <span className="project-nav-name">{project.name}</span>
+              {selectedProjectId === project._id && <ArrowRight size={15} />}
+            </button>
+          );
+        })}
         {!projects.length && !projectsLoading && (
           <p className="sidebar-empty">Your next project starts here.</p>
         )}

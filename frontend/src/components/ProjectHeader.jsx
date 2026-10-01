@@ -1,4 +1,4 @@
-import { FolderKanban, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Edit, FolderKanban, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import Button from "./Button.jsx";
 
 export default function ProjectHeader({
@@ -31,8 +31,9 @@ export default function ProjectHeader({
               onClick={onToggleMenu}
             />
             {openMenu && (
-              <div className="action-menu">
+              <div className="action-menu" onMouseDown={(e) => e.stopPropagation()}>
                 <button type="button" onClick={onEditProject}>
+                  <Edit size={14} />
                   Edit project
                 </button>
                 <button

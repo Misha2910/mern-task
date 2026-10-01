@@ -1,15 +1,10 @@
 import { request } from "./apiInstance.js";
 
 export const taskApi = {
-  list: (token, projectId) =>
-    request(`/projects/${projectId}/tasks`, { token }),
-  create: (token, projectId, values) =>
-    request(`/projects/${projectId}/tasks`, {
-      token,
-      method: "POST",
-      body: values,
-    }),
-  update: (token, id, values) =>
-    request(`/tasks/${id}`, { token, method: "PATCH", body: values }),
-  remove: (token, id) => request(`/tasks/${id}`, { token, method: "DELETE" }),
+  list: (projectId) => request(`/projects/${projectId}/tasks`),
+  create: (projectId, values) =>
+    request(`/projects/${projectId}/tasks`, { method: "POST", body: values }),
+  update: (id, values) => request(`/tasks/${id}`, { method: "PATCH", body: values }),
+  remove: (id) => request(`/tasks/${id}`, { method: "DELETE" }),
 };
+

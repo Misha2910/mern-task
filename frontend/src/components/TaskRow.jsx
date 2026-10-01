@@ -29,7 +29,7 @@ export default function TaskRow({ task, onEdit, onDelete, onUpdateStatus }) {
             aria-label={`Update ${task.title} status`}
           >
             {statuses.map((status) => (
-              <option key={status}>{status}</option>
+              <option key={status} value={status}>{status}</option>
             ))}
           </select>
           <ChevronDown size={13} />
